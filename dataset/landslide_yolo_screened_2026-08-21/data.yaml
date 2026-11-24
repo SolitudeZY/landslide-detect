@@ -1,0 +1,6 @@
+path: /mnt/cn600_1tb/ZY/landslide/dataset/landslide_yolo_screened_2026-08-21
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: landslide

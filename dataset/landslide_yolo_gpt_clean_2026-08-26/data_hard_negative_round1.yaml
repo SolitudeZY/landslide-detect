@@ -1,0 +1,6 @@
+path: /mnt/cn600_1tb/ZY/landslide/dataset/landslide_yolo_gpt_clean_2026-08-26
+train: /mnt/cn600_1tb/ZY/landslide/dataset/landslide_yolo_gpt_clean_2026-08-26/hard_negative_train_round1.txt
+val: images/val
+test: images/test
+names:
+  0: landslide

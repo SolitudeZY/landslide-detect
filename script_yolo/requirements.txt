@@ -1,0 +1,7 @@
+ultralytics==8.4.89
+opencv-python-headless==4.10.0.84
+Pillow>=10.0
+ImageHash==4.3.2
+PyYAML>=6.0
+onnx>=1.14
+onnx-simplifier>=0.4.36

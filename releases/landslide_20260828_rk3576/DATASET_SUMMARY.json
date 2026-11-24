@@ -1,0 +1,50 @@
+{
+  "base_data_dir": "/mnt/cn600_1tb/ZY/landslide/dataset/landslide_yolo_screened_2026-08-21",
+  "gpt_selection": {
+    "gpt_v1": 252,
+    "gpt_v2": 93
+  },
+  "gpt_selection_by_split": {
+    "val": 54,
+    "train": 266,
+    "test": 25
+  },
+  "kept_images": 3219,
+  "kept_positive": 1806,
+  "kept_negative": 1413,
+  "boxes": 1835,
+  "split_counts": {
+    "train": {
+      "images": 2620,
+      "positive": 1465,
+      "negative": 1155,
+      "boxes": 1488
+    },
+    "val": {
+      "images": 314,
+      "positive": 185,
+      "negative": 129,
+      "boxes": 188
+    },
+    "test": {
+      "images": 285,
+      "positive": 156,
+      "negative": 129,
+      "boxes": 159
+    }
+  },
+  "source_counts": {
+    "negative_20260821": 232,
+    "negative_captures": 914,
+    "negative_video_2": 96,
+    "negative_video_3": 146,
+    "new_positive_20260821": 76,
+    "reviewed": 991,
+    "reviewed_negative_20260821": 18,
+    "supplement": 374,
+    "gpt_v1": 252,
+    "gpt_v2": 93,
+    "seedance_ai_video_20260827": 7,
+    "seedance_positive_20260827": 20
+  }
+}
