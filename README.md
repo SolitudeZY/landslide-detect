@@ -76,7 +76,7 @@ landslide/
 │   ├── run_train_*.sh              # 各轮训练复现脚本
 │   ├── requirements.txt
 │   └── test_*.py                   # 单元测试
-├── dataset/                        # 仅保留 data*.yaml（图片/标签/标注不入库）
+├── dataset/                        # 仅保留 data*.yaml 与说明文档（图片/标签/标注不入库）
 ├── rk3576_deploy/                  # RK3576 端侧
 │   ├── infer_rknn.py               # RKNN Lite2 推理（图片/视频/RTSP，分段耗时）
 │   ├── runtime_utils.py            # RKNN runtime 创建与核心绑定
