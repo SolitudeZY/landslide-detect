@@ -10,17 +10,44 @@
 
 ## 1. 生成融合数据集
 
-建议使用项目已有的 `landslide` Conda 环境：
+### 1.1 正样本质量审计
+
+融合后可先运行只读审计，生成 `positive_quality_audit.csv`，不会删除或修改图片：
 
 ```bash
-conda run -n landslide python ZY/script_yolo/prepare_dataset.py --dry-run
-conda run -n landslide python ZY/script_yolo/prepare_dataset.py \
-  --calibration-size 500 \
-  --calibration-positive-ratio 0.5
-conda run -n landslide python ZY/script_yolo/validate_dataset.py
+conda run -n landslide python script_yolo/audit_positive_quality.py \
+  --data-dir dataset/landslide_yolo_screened_2026-08-21
 ```
 
-默认输出到 `ZY/dataset/landslide_yolo/`，结构如下：
+将需要复核的图片按风险类型导出到同一目录的不同子目录：
+
+```bash
+conda run -n landslide python script_yolo/export_quality_review.py \
+  --audit dataset/landslide_yolo_screened_2026-08-21/positive_quality_audit.csv
+```
+
+默认输出到 `dataset/positive_quality_review_2026-08-26/`，包含
+`portrait_domain_mismatch/`、`possibly_blurred/`、`extreme_exposure/`、
+`tiny_target/`、`box_near_edge/`、`all_flagged/` 等目录，以及
+`review_index.csv`。同一图片命中多个条件时会出现在多个分类目录中；原始数据不变。
+
+CSV 中的 `reasons` 用于排序人工复核：`portrait_domain_mismatch`（竖屏域差异）、
+`low_resolution`、`possibly_blurred`、`extreme_exposure`、`tiny_target`、
+`box_near_edge`。这些是风险提示，不是自动删样规则；确认后应在来源清单或审核表中记录
+`keep/review/exclude`，再重建数据集。默认阈值可按实际监控分辨率用命令行参数调整。
+
+当前筛选数据集已经生成，训练时无需重新执行本节。若以后需要重建数据集，先在所用
+环境中安装 `requirements.txt` 里的 `ImageHash`、Pillow 和 PyYAML，再执行：
+
+```bash
+conda run -n landslide python script_yolo/prepare_dataset.py --dry-run
+conda run -n landslide python script_yolo/prepare_dataset.py \
+  --calibration-size 500 \
+  --calibration-positive-ratio 0.5
+conda run -n yolo-obb python script_yolo/validate_dataset.py
+```
+
+默认输出到 `dataset/landslide_yolo/`，结构如下：
 
 ```text
 landslide_yolo/
@@ -52,29 +79,30 @@ landslide_yolo/
 
 ## 2. 训练
 
-RK3568 的算力和内存有限，先用 `yolov8n` 建立基线。本机 RTX 5060 Ti 是
-`sm_120`，GPU 训练必须使用含 CUDA 13 的 `yolo26` 环境；`landslide` 环境中的
-PyTorch 2.6/CUDA 12.4 不兼容该显卡。
+RK3568 的算力和内存有限，先用 `yolov8n` 建立基线。服务器使用 RTX 4060 Ti，
+现有 `yolo-obb` Conda 环境可识别 GPU；`landslide` 环境仅用于数据整理，未安装
+PyTorch 和 Ultralytics，不能用于训练。
 
 ```bash
-conda run -n yolo26 python ZY/script_yolo/train.py \
-  --model yolov8/ckpt/yolov8n.pt \
+cd /mnt/cn600_1tb/ZY/landslide
+conda run -n yolo-obb python script_yolo/train.py \
   --epochs 150 \
   --imgsz 640 \
-  --batch 16 \
+  --batch 8 \
   --device 0 \
   --export-onnx
 ```
 
-显存不足时先把 `--batch` 改为 8 或 4。训练结果写入
-`ZY/script_yolo/runs/train/landslide_yolov8n/`。部署前应以 test 集固定评估一次，并按召回率而不是只按 mAP 选择置信度阈值。
+上述命令默认使用 `dataset/landslide_yolo_screened_2026-08-19/data.yaml` 和
+`yolov8/ckpt/yolov8n.pt`。显存不足时把 `--batch` 改为 4；训练结果写入
+`script_yolo/runs/train/landslide_yolov8n/`。部署前应以 test 集固定评估一次，并按召回率而不是只按 mAP 选择置信度阈值。
 最终超参数确定后，可在训练命令中加一次 `--evaluate-test`；不要在反复调参时持续查看 test 指标。
 
 如训练后单独导出：
 
 ```bash
-conda run -n landslide python ZY/script_yolo/export_onnx.py \
-  --model ZY/script_yolo/runs/train/landslide_yolov8n/weights/best.pt \
+conda run -n yolo-obb python script_yolo/export_onnx.py \
+  --model script_yolo/runs/train/landslide_yolov8n/weights/best.pt \
   --imgsz 640 --opset 12
 ```
 
@@ -83,37 +111,36 @@ conda run -n landslide python ZY/script_yolo/export_onnx.py \
 ## 3. 视频推理
 
 ```bash
-conda run -n yolo26 python ZY/script_yolo/infer_video.py \
-  --model ZY/script_yolo/runs/train/landslide_yolov8n_640/weights/best.pt \
+conda run -n yolo-obb python script_yolo/infer_video.py \
+  --model script_yolo/runs/train/landslide_yolov8n_640/weights/best.pt \
   --source /path/to/video.mp4 \
   --conf 0.35 --device 0
 ```
 
-脚本输出标注视频和同名 JSONL。默认只有 YOLO 框同时通过相机运动补偿后的帧差与
-局部残差光流判断，才进入“10 帧中至少 6 帧命中”的报警投票。默认运动参数为：
+脚本输出标注视频和同名 JSONL。主推理链路只使用 YOLO 检测结果，不再用帧差或光流
+判定滑坡是否成立。默认在完整 10 帧窗口内至少 6 帧检出时激活报警；报警后窗口命中数
+连续20帧未检出时解除，用迟滞避免短暂漏检导致报警抖动：
 
-- `--motion-frame-gap 5`：比较当前帧与前 5 帧。
-- `--diff-pixel-threshold 18 --diff-ratio-threshold 0.003`：框内至少 0.3% 像素显著变化。
-- `--flow-threshold 0.20`：扣除全局相机运动后，框内光流残差 75 分位至少 0.20 像素。
-- `--max-camera-motion 3.0`：全局镜头位移超过 3 像素时不计票；固定监控建议保持开启。
-- `--alert-window 10 --alert-min-hits 6`：最终时序门槛。
+- `--alert-window 10 --alert-min-hits 6`：报警激活门槛。
+- `--alert-clear-misses 20`：报警解除门槛，约0.8秒@25FPS，应按实际推理FPS标定。
+- `--conf 0.35`：单帧检测阈值，必须结合独立真实负样本回放标定。
 
-光流点不足 4 个时自动使用帧差兜底。调试时可用 `--disable-motion-gate` 恢复只按
-YOLO 框投票。RTSP 地址和摄像头编号也可以作为 `--source`。
+`motion.py` 和 `test_motion.py` 只保留用于复现早期实验，不再被 `infer_video.py` 引用。
+RTSP 地址和摄像头编号仍可作为 `--source`。10 帧窗口在 25 FPS 下约为 0.4 秒，在
+10 FPS 下约为 1 秒；板端主动跳帧时应按实际推理帧率评估告警延迟。
 
-阈值建议按以下顺序调整，每次只改一项并回放同一组正负视频：
+## 3.1 动态困难负样本训练
 
-1. 先把 `motion-frame-gap` 设为约 0.2 秒对应的帧数，例如 15/25/30 FPS 分别用 3/5/6。
-2. 固定摄像头先保持 `max-camera-motion=3`；支架轻微晃动可放宽到 4–5，不建议关闭。
-3. 慢速、小范围滑动漏报时，依次把 `diff-ratio-threshold` 降到 0.005、把
-   `flow-threshold` 降到 0.15；不要先把投票门槛降到 5/10。
-4. 雨雪、树叶或夜间噪声误报时，把 `diff-pixel-threshold` 提高到 22–30，或把
-   `diff-ratio-threshold` 提高到 0.012–0.02。
-5. `motion-width` 会改变光流像素尺度；部署和调参都应保持 640，否则要重新标定
-   `flow-threshold` 与 `max-camera-motion`。
+`mine_hard_negatives.py` 用当前模型扫描 train 中的空标签负样本，选出高置信度误报，
+通过在训练清单中重复路径增加训练曝光，不复制图片、不修改 val/test。推荐使用两轮流程：
 
-10 帧窗口在 25 FPS 下约为 0.4 秒，在 10 FPS 下约为 1 秒。若板端主动跳帧，应按实际
-推理帧率评估告警延迟，而不是只看帧数。
+```bash
+bash script_yolo/run_train_seedance_hard_mining_20260827.sh
+```
+
+流程会先用起始模型挖掘一次，微调15轮；再用第一轮最佳权重重新挖掘，继续微调20轮。
+默认入选阈值为0.20，每个难负样本在对应训练清单中总计出现4次。每轮都会保留 CSV
+明细和 JSON 汇总，最终仍需用固定真实 val/test、完整正样本视频和负样本视频选择权重。
 
 ## 4. RK3568 部署边界
 

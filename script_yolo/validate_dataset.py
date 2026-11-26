@@ -18,17 +18,32 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 
 
 def parse_args() -> argparse.Namespace:
-    default_data = Path(__file__).resolve().parent.parent / "dataset/landslide_yolo/data.yaml"
+    default_data = (
+        Path(__file__).resolve().parent.parent
+        / "dataset/landslide_yolo_screened_2026-08-21/data.yaml"
+    )
     parser = argparse.ArgumentParser(description="验证融合后的 YOLO 数据集。")
     parser.add_argument("--data", type=Path, default=default_data)
     return parser.parse_args()
 
 
 def resolve_root(data_path: Path, config: dict) -> Path:
-    root = Path(config.get("path", data_path.parent))
+    data_path = data_path.resolve()
+    configured_root = config.get("path")
+    root = Path(configured_root) if configured_root else data_path.parent
     if not root.is_absolute():
         root = (data_path.parent / root).resolve()
     return root
+
+
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            with path.open(encoding=encoding, newline="") as handle:
+                return list(csv.DictReader(handle))
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeError(f"无法识别 CSV 编码: {path}")
 
 
 def main() -> None:
@@ -116,11 +131,10 @@ def main() -> None:
     manifest_path = root / "manifest.csv"
     if manifest_path.is_file():
         group_splits: dict[str, set[str]] = {}
-        with manifest_path.open(encoding="utf-8", newline="") as handle:
-            for row in csv.DictReader(handle):
-                if row["status"] != "kept" or not row["group"]:
-                    continue
-                group_splits.setdefault(row["group"], set()).add(row["split"])
+        for row in read_csv_rows(manifest_path):
+            if row["status"] != "kept" or not row["group"]:
+                continue
+            group_splits.setdefault(row["group"], set()).add(row["split"])
         leaked_groups = [group for group, splits in group_splits.items() if len(splits) > 1]
         if leaked_groups:
             errors.append(f"group_leakage: {len(leaked_groups)} 个来源组跨越数据划分")
