@@ -63,60 +63,46 @@ class DisjointSet:
 
 def parse_args() -> argparse.Namespace:
     script_dir = Path(__file__).resolve().parent
-    dataset_dir = script_dir.parent / "dataset"
+    zy_dir = script_dir.parent
+    dataset_dir = zy_dir / "dataset"
+    fusion_dir = dataset_dir / "data_fusion"
     parser = argparse.ArgumentParser(
         description="融合审核后的 COCO 正样本和无标注负样本，输出 YOLO 检测数据集。"
     )
     parser.add_argument(
         "--reviewed-coco",
         type=Path,
-        default=dataset_dir
-        / "正样本-滑坡/landslide-26-08-19/annotations/instances_Train.json",
+        default=fusion_dir
+        / "正样本-滑坡/road_landslide_reviewed/annotations/instances_Train.json",
     )
     parser.add_argument(
         "--reviewed-images",
         type=Path,
-        default=dataset_dir / "正样本-滑坡/landslide-26-08-19/images/Train",
+        default=fusion_dir / "正样本-滑坡/road_landslide_reviewed/images/Train",
     )
     parser.add_argument(
         "--supplement-coco",
         type=Path,
-        default=dataset_dir
-        / "正样本-滑坡/landslide补充-v1-08-19/annotations/instances_Train.json",
+        default=fusion_dir
+        / "正样本-滑坡/road_landslide_补充_positive_only/annotations/instances_Train.json",
     )
     parser.add_argument(
         "--supplement-images",
         type=Path,
-        default=dataset_dir / "正样本-滑坡/landslide补充-v1-08-19/images/Train",
-    )
-    parser.add_argument(
-        "--new-coco",
-        type=Path,
-        default=dataset_dir
-        / "正样本-滑坡/landslide-08-21/annotations/instances_Validation.json",
-    )
-    parser.add_argument(
-        "--new-images",
-        type=Path,
-        default=dataset_dir / "正样本-滑坡/landslide-08-21/images/Validation",
+        default=fusion_dir
+        / "正样本-滑坡/road_landslide_补充_positive_only/images/Train",
     )
     parser.add_argument(
         "--negative-dir",
         action="append",
         type=Path,
         dest="negative_dirs",
-        help="可重复传入；未指定时使用项目内已审核的负样本目录。",
-    )
-    parser.add_argument(
-        "--exclude-prefix",
-        action="append",
-        default=["landslide_3_"],
-        help="按文件名前缀整组排除；可重复传入。",
+        help="可重复传入；未指定时使用两个审核后的默认负样本目录。",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=dataset_dir / "landslide_yolo_screened_2026-08-21",
+        default=dataset_dir / "landslide_yolo",
     )
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--val-ratio", type=float, default=0.1)
@@ -150,11 +136,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.negative_dirs is None:
         args.negative_dirs = [
-            dataset_dir / "负样本-滑坡/captures_v2_reviewed_negative",
-            dataset_dir / "负样本-滑坡/negative_samples",
-            dataset_dir / "负样本-滑坡/26-8-18-real",
-            dataset_dir / "负样本-滑坡/26_08_19-21-real",
-            dataset_dir / "待复核-08-21-无框样本/images",
+            fusion_dir / "负样本-滑坡/captures_v2_reviewed_negative",
+            fusion_dir / "负样本-滑坡/negative_samples",
         ]
     ratios = (args.train_ratio, args.val_ratio, args.test_ratio)
     if any(value < 0 for value in ratios) or abs(sum(ratios) - 1.0) > 1e-6:
@@ -243,36 +226,16 @@ def load_coco(source: str, json_path: Path, image_dir: Path) -> list[Sample]:
     return samples
 
 
-def negative_source(directory: Path, index: int) -> str:
-    sources = {
-        "captures_v2_reviewed_negative": "negative_captures",
-        "negative_samples": "negative_video_2",
-        "26-8-18-real": "negative_video_3",
-        "26_08_19-21-real": "negative_20260821",
-    }
-    if "待复核-08-21-无框样本" in str(directory):
-        return "reviewed_negative_20260821"
-    return sources.get(directory.name, f"negative_video_{index}")
-
-
 def load_negatives(negative_dirs: Iterable[Path]) -> list[Sample]:
     samples: list[Sample] = []
     for index, directory in enumerate(negative_dirs, start=1):
         if not directory.is_dir():
             raise FileNotFoundError(f"负样本目录不存在: {directory}")
-        source = negative_source(directory, index)
+        source = "negative_captures" if "captures" in directory.name else f"negative_video_{index}"
         for path in sorted(directory.iterdir()):
             if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
                 samples.append(Sample(source=source, path=path, positive=False))
     return samples
-
-
-def exclude_samples(samples: list[Sample], prefixes: Iterable[str]) -> None:
-    prefixes = tuple(prefixes)
-    for sample in samples:
-        if sample.path.name.startswith(prefixes):
-            sample.status = "excluded_user"
-            sample.note = "用户审核后整组排除"
 
 
 def inspect_images(samples: list[Sample]) -> None:
@@ -335,7 +298,7 @@ def clip_boxes(samples: list[Sample]) -> None:
 
 
 def exact_deduplicate(samples: list[Sample], duplicates: list[dict[str, object]]) -> None:
-    priority = {"new_positive_20260821": 4, "supplement": 3, "reviewed": 2}
+    priority = {"supplement": 3, "reviewed": 2, "negative_captures": 1}
     candidates = sorted(
         (sample for sample in samples if sample.status == "candidate"),
         key=lambda item: (-priority.get(item.source, 0), str(item.path)),
@@ -447,28 +410,7 @@ def assign_temporal_groups(samples: list[Sample]) -> None:
                 (int(sichuan_match.group(1)) / 1000.0, sample)
             )
             continue
-        vlcsnap_match = re.match(
-            r"vlcsnap-(\d{4}-\d{2}-\d{2})-(\d{2})h(\d{2})m(\d{2})s(\d+)",
-            name,
-        )
-        if vlcsnap_match:
-            date, hour, minute, second, fraction = vlcsnap_match.groups()
-            timestamp = (
-                int(hour) * 3600
-                + int(minute) * 60
-                + int(second)
-                + float(f"0.{fraction}")
-            )
-            timelines[f"{sample.source}:vlcsnap:{date}"].append((timestamp, sample))
-            continue
-        sequence_match = re.match(r"(.+)_([0-9]{4})\.[^.]+$", name)
-        if sequence_match:
-            prefix, frame_number = sequence_match.groups()
-            timelines[f"{sample.source}:sequence:{prefix}"].append(
-                (int(frame_number), sample)
-            )
-            continue
-        frame_match = re.match(r"(?:video)?frame_(\d+)", name)
+        frame_match = re.match(r"frame_(\d+)", name)
         if frame_match:
             parent_id = hashlib.sha1(str(sample.path.parent).encode()).hexdigest()[:10]
             timelines[f"{sample.source}:frames:{parent_id}"].append(
@@ -483,8 +425,8 @@ def assign_temporal_groups(samples: list[Sample]) -> None:
 
     for origin, entries in timelines.items():
         entries.sort(key=lambda item: item[0])
-        is_capture = origin.endswith(":captures") or ":vlcsnap:" in origin
-        is_frame_sequence = ":frames:" in origin or ":sequence:" in origin
+        is_capture = origin.endswith(":captures")
+        is_frame_sequence = ":frames:" in origin
         max_gap = 60.0 if is_capture else (float("inf") if is_frame_sequence else 3.0)
         scene = 0
         previous_time: float | None = None
@@ -723,13 +665,6 @@ def write_outputs(
             for split in SPLITS
         },
         "source_counts": dict(Counter(item.source for item in active)),
-        "source_split_counts": {
-            source: {
-                split: sum(item.source == source and item.split == split for item in active)
-                for split in SPLITS
-            }
-            for source in sorted({item.source for item in active})
-        },
         "near_duplicate_clusters": duplicate_cluster_summary(samples),
     }
     (staging / "summary.json").write_text(
@@ -762,13 +697,6 @@ def preview_summary(samples: list[Sample], args: argparse.Namespace) -> dict[str
             }
             for split in SPLITS
         },
-        "source_split_counts": {
-            source: {
-                split: sum(item.source == source and item.split == split for item in active)
-                for split in SPLITS
-            }
-            for source in sorted({item.source for item in active})
-        },
     }
 
 
@@ -790,9 +718,7 @@ def main() -> None:
     args = parse_args()
     samples = load_coco("reviewed", args.reviewed_coco, args.reviewed_images)
     samples.extend(load_coco("supplement", args.supplement_coco, args.supplement_images))
-    samples.extend(load_coco("new_positive_20260821", args.new_coco, args.new_images))
     samples.extend(load_negatives(args.negative_dirs))
-    exclude_samples(samples, args.exclude_prefix)
     duplicates: list[dict[str, object]] = []
     inspect_images(samples)
     clip_boxes(samples)

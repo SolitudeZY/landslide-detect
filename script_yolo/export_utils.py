@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import onnx
+from onnxsim import simplify
 from ultralytics import YOLO
 
 
@@ -28,8 +29,6 @@ def export_static_onnx(
         )
     ).resolve()
     if run_simplifier:
-        from onnxsim import simplify
-
         graph = onnx.load(str(output))
         simplified_graph, valid = simplify(graph)
         if not valid:
